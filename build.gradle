@@ -1,0 +1,39 @@
+def hystrixVersion='1.4.0-RC4'
+def eurekaVersion='1.1.132'
+
+subprojects{
+    group = 'com.ctriposs'
+    version = '1.0'
+
+    apply plugin: 'java'
+    sourceCompatibility = 1.7
+    repositories {
+        mavenCentral()
+        mavenLocal()
+    }
+
+    dependencies {
+        testCompile 'junit:junit:4.11'
+    }
+}
+
+project(':cache-proxy-server'){
+    apply plugin:'application'
+    mainClassName='com.ctriposs.cacheproxy.tcp.CacheProxyMain'
+
+    dependencies {
+
+        compile 'org.slf4j:slf4j-api:1.7.5'
+	compile 'io.netty:netty-handler:5.0.0.Alpha1'
+        compile 'org.apache.httpcomponents:httpclient:4.3.3'
+
+    }
+}
+
+project(':cache-proxy-memcacheclient'){
+    apply plugin: 'java'
+    dependencies {
+        compile 'org.apache.logging.log4j:log4j-core:2.1'
+    }
+}
+
