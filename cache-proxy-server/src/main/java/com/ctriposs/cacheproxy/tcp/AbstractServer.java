@@ -4,7 +4,7 @@ package com.ctriposs.cacheproxy.tcp;
 import java.util.logging.Logger;
 
 /**
- * Created by jiang.j on 2015/2/17.
+ * Created by tyaloo on 2015/2/17.
  */
 public abstract class AbstractServer {
     private Logger logger = Logger.getLogger(this.getClass().getName());

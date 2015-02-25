@@ -1,8 +1,11 @@
 package com.ctriposs.cacheproxy.tcp.netty;
 
+import io.netty.buffer.ByteBuf;
+import io.netty.buffer.Unpooled;
 import io.netty.channel.ChannelHandlerContext;
 
 import java.io.IOException;
+import java.nio.charset.Charset;
 
 /**
  * Created by tyaloo on 2015/2/16.
@@ -31,24 +34,65 @@ public class MemcacheProxy{
         }
     }
 
-   public static void callMemcachServer(byte[] request,ChannelHandlerContext ctx) throws IOException {
-        SockIOPool.SockIO sock=null;
-       try {
-           sock = pool.getSock("test", 12345);
-           sock.write(request);
-           sock.flush();
-           setResponseBytes(sock, ctx);
-       }finally {
-           if(sock!=null&&sock.isAlive())
-              sock.close();
-       }
+    private int needReadCount = 0;
+    SockIOPool.SockIO currentSock=null;
+    public  void sendToStore(ByteBuf in,ChannelHandlerContext ctx) throws IOException {
 
-   }
+        int readableCount = in.readableBytes();
+        if(needReadCount>0) {
+            if (readableCount >= needReadCount) {
+                currentSock.write(in.readBytes(needReadCount).array());
+                needReadCount = 0;
+            } else {
+                currentSock.write(in.readBytes(readableCount).array());
+                needReadCount -= readableCount;
+            }
+        }
+
+        final int eol = findEndOfLine(in);
+        final int length = eol - in.readerIndex();
+
+        if (eol > 0) {
+            final int delimLength = in.getByte(eol) == '\r' ? 2 : 1;
+            final ByteBuf frame = in.readBytes(length + delimLength);
+            String cmd = frame.toString(Charset.defaultCharset());
+
+            String[] tmp = cmd.split("\\s");
+            if (tmp.length > 3) {
+                needReadCount = Integer.parseInt(tmp[tmp.length - 1]) + 2;
+            }
+
+            if(currentSock == null)
+                currentSock = pool.getSock("test", 12345);
+
+            currentSock.write(frame.array());
+
+            readableCount = in.readableBytes();
+
+            if(readableCount>=needReadCount){
+                currentSock.write(in.readBytes(needReadCount).array());
+                needReadCount=0;
+            }
+            else{
+                currentSock.write(in.readBytes(readableCount).array());
+                needReadCount-=readableCount;
+            }
+            System.out.println(frame.toString(Charset.defaultCharset()));
+        }
+
+        if (needReadCount == 0 && currentSock!=null) {
+            currentSock.flush();
+            setResponseBytes(currentSock,ctx);
+            currentSock.close();
+            currentSock=null;
+            ctx.flush();
+        }
+    }
 
     private static void setResponseBytes(SockIOPool.SockIO sock,ChannelHandlerContext ctx) throws IOException {
         String line = sock.readLine();
 
-        ctx.write((line + "\r\n").getBytes());
+        ctx.write(Unpooled.copiedBuffer(line + "\r\n", Charset.defaultCharset()));
         if(line.startsWith(VALUE)) {
             boolean isEnd =false;
             while (!isEnd) {
@@ -67,14 +111,14 @@ public class MemcacheProxy{
 
                     byte[] buffer= new byte[readCount];
                     sock.read(buffer);
-                    ctx.write(buffer);
+                    ctx.write(Unpooled.copiedBuffer(buffer));
                 }
 
                 line = sock.readLine();
                 if(line.startsWith(END)){
                    isEnd=true;
                 }
-                ctx.write((line + "\r\n").getBytes());
+                ctx.write(Unpooled.copiedBuffer(line + "\r\n", Charset.defaultCharset()));
             }
         }
         else if(line.startsWith(STATS)){
@@ -85,56 +129,23 @@ public class MemcacheProxy{
                 if(line.startsWith(END)){
                     isEnd=true;
                 }
-                ctx.write((line + "\r\n").getBytes());
+                ctx.write(Unpooled.copiedBuffer(line + "\r\n", Charset.defaultCharset()));
             }
 
         }
 
-
-
-
-
-
     }
-    private static byte[] getResponseBytes(SockIOPool.SockIO sock) throws IOException {
-        String line = sock.readLine();
-
-        System.out.println(line);
-        byte[] valueBytes = null;
-        while(line.startsWith(VALUE)) {
-            String[] info = line.split(" ");
-//            int flag = Integer.parseInt(info[2]);
-            int length = Integer.parseInt(info[3]);
-
-            // read obj into buffer
-            valueBytes = new byte[length];
-            sock.read(valueBytes);
-            sock.clearEOL();
-            sock.readLine();
-
+    private static int findEndOfLine(final ByteBuf buffer) {
+        final int n = buffer.writerIndex();
+        for (int i = buffer.readerIndex(); i < n; i++) {
+            final byte b = buffer.getByte(i);
+            if (b == '\n') {
+                return i;
+            } else if (b == '\r' && i < n - 1 && buffer.getByte(i + 1) == '\n') {
+                return i;  // \r\n
+            }
         }
-
-        byte[] cmdBytes = (line +"\r\n").getBytes();
-
-        if(valueBytes!=null){
-
-            byte[] rtn = new byte[cmdBytes.length+valueBytes.length+7];
-
-            System.arraycopy(cmdBytes,0,rtn,0,cmdBytes.length);
-            System.arraycopy(valueBytes,0,rtn,cmdBytes.length,valueBytes.length);
-            rtn[rtn.length-7]='\r';
-            rtn[rtn.length-6]='\n';
-            rtn[rtn.length-5]='E';
-            rtn[rtn.length-4]='N';
-            rtn[rtn.length-3]='D';
-            rtn[rtn.length-2]='\r';
-            rtn[rtn.length-1]='\n';
-
-            return rtn;
-        }else{
-
-            return  cmdBytes;
-        }
-
+        return -1;  // Not found.
     }
+
 }
